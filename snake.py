@@ -25,23 +25,12 @@
 
 
 from Point import Point
-import RPi.GPIO as GPIO
-import multilineMAX7219 as LEDMatrix # from https://github.com/tutRPi/multilineMAX7219
-from multilineMAX7219 import GFX_ON, GFX_OFF, GFX_INVERT
+
+
 from random import randrange
 import threading, sys
 import time
 
-
-USE_JOYPAD = False 	# if you set this to True, you have to connect 4 Buttons
-					# else you can control it with your arrow keys (USE_JOYPAD=False)
-
-# only necessary if USE_JOYPAD = True
-# RPi.GPIO Layout (GPIO numbers)
-GPIO_UP 	= 4
-GPIO_DOWN 	= 17
-GPIO_RIGHT 	= 21
-GPIO_LEFT	= 22
 
 # Directions
 DIR_U = Point(0,1)
@@ -50,8 +39,8 @@ DIR_R = Point(1,0)
 DIR_L = Point(-1,0)
 
 # Make sure you set these correct in multilineMAX7219.py
-WIDTH = 8*LEDMatrix.MATRIX_WIDTH-1
-HEIGHT = 8*LEDMatrix.MATRIX_HEIGHT-1
+WIDTH = 30
+HEIGHT = 30
 
 tail = [Point(WIDTH//2, HEIGHT//2)]
 start = randrange(2)
@@ -59,19 +48,59 @@ direction = Point(start, 1 - start)	# init direction
 
 target = Point()
 running = True			# loop variable
-speed = 0.3				# getting faster, the longer the snake is
+speed = 0.1				# getting faster, the longer the snake is
 wasDisplayed = True		# to allow only one new direction per frame
 
-LEDMatrix.init()
+import opc, time
+client = opc.Client('192.168.0.183:7890')
+pixels = [ (0,0,0) ] * WIDTH*HEIGHT
 
+def getPixelNum(x,y):
+	if(y%2==0):
+		x=WIDTH-x-1
+
+	pixelNum=(y-1)*WIDTH*-1+x
+	return pixelNum
+#LEDMatrix.init()
+def setPixel(x,y,toggle=False,sleep = 0.01):	
+	if(toggle==True):
+		color = (255, 255, 255)
+	else:
+		color = (0,0,0)
+	setColorPixel(x,y,color,sleep)
+	
+	
+def setColorPixel(x,y,color,sleep = 0.01):
+	global pixels
+	i = getPixelNum(x,y)
+	pixels[i] = color			
+	time.sleep(sleep)	
+
+def setAll(toggle):
+	global pixels
+	if toggle:
+		pixels = [ (255,255,255) ] * WIDTH*HEIGHT		
+	else:
+		pixels = [ (0,0,0) ] * WIDTH*HEIGHT		
+	render()	
+		
+def render():
+	global pixels
+	client.put_pixels(pixels)
 
 def display():
+	global pixels
 	# displays all on the LED Matrices
-	LEDMatrix.gfx_set_all(GFX_OFF)
+	#LEDMatrix.gfx_set_all(GFX_OFF)
+	pixels = [ (0,0,0) ] * WIDTH*HEIGHT
+
 	for p in tail:
-		LEDMatrix.gfx_set_px(int(p.x), int(p.y), GFX_ON)
-	LEDMatrix.gfx_set_px(int(target.x), int(target.y), GFX_ON)
-	LEDMatrix.gfx_render()
+		setPixel(int(p.x), int(p.y), True)
+
+	setColorPixel(int(target.x), int(target.y), (255,0,0))
+	render()
+	
+
 	global wasDisplayed
 	wasDisplayed = True
 
@@ -105,21 +134,20 @@ def move():
 		else:
 			# Game Over
 			running = False
-			for i in range(6):
-				LEDMatrix.gfx_set_all(GFX_INVERT)
-				LEDMatrix.gfx_render()
+			for i in range(3):
+				setAll(True);				
 				time.sleep(0.3)
-			if USE_JOYPAD:
-				print "Game Over. Score: " + str(len(tail)-1)
-			else:
-				print "Game Over. Press any Key to exit. Score: " + str(len(tail)-1)
-			LEDMatrix.clear_all()
+				setAll(False);				
+			print "Game Over. Press any Key to exit. Score: " + str(len(tail)-1)
+			#LEDMatrix.clear_all()
 			raise SystemExit("\n")
 		
 		# threading for calling it every period
 		threading.Timer(speed, move).start ()
 	else:
-		LEDMatrix.clear_all()
+		#LEDMatrix.clear_all()
+		pass
+
 	display()
 
 	
@@ -136,45 +164,13 @@ if __name__ == "__main__":
 	
 	setTarget()
 	move()
-	
-	if USE_JOYPAD:
-		# do not press several buttons once
+
+	# Use Keyboard Arrows
+	from _Getch import _Getch
+	getch = _Getch()
+	print "To end the game press <q>"
+	while running:
 		try:
-			print "To end the game press <CTRL> + C"
-			# RPi.GPIO Layout (GPIO numbers)
-			GPIO.setmode(GPIO.BCM)
-			GPIO.setwarnings(False)
-			# set GPIOs to Input
-			GPIO.setup(GPIO_UP, GPIO.IN)
-			GPIO.setup(GPIO_DOWN, GPIO.IN)
-			GPIO.setup(GPIO_RIGHT, GPIO.IN)
-			GPIO.setup(GPIO_LEFT, GPIO.IN)
-			while running:
-				if GPIO.input(GPIO_UP) == GPIO.HIGH:
-					changeDirection(DIR_U)
-				elif GPIO.input(GPIO_DOWN) == GPIO.HIGH:
-					changeDirection(DIR_D)
-				elif GPIO.input(GPIO_RIGHT) == GPIO.HIGH:
-					changeDirection(DIR_R)
-				elif GPIO.input(GPIO_LEFT) == GPIO.HIGH:
-					changeDirection(DIR_L)
-				time.sleep(0.1)
-		except KeyboardInterrupt:
-			# CTRL + C
-			print "\nGoodbye"
-			LEDMatrix.clear_all()
-			time.sleep(0.1)
-			running = False
-			GPIO.cleanup(GPIO_UP)
-			GPIO.cleanup(GPIO_DOWN)
-			GPIO.cleanup(GPIO_RIGHT)
-			GPIO.cleanup(GPIO_LEFT)
-	else:
-		# Use Keyboard Arrows
-		from _Getch import _Getch
-		getch = _Getch()
-		print "To end the game press <q>"
-		while running:
 			key = ord(getch())
 			if key == 27: #ESC
 				key = ord(getch())
@@ -182,13 +178,22 @@ if __name__ == "__main__":
 					key = ord(getch())
 					if key == 65: #Up arrow
 						changeDirection(DIR_U)
+						#setPixel(0,1,True)
 					if key == 66: #Down arrow
 						changeDirection(DIR_D)
+						#setPixel(0,1,False)
 					elif key == 67: #right arrow
 						changeDirection(DIR_R)
+						#setPixel(29,29,True)
 					elif key == 68: #left arrow
+						#setPixel(29,29,False)
 						changeDirection(DIR_L)
+
 			elif key == 113:
+				setAll(False)
 				print "Goodbye"
 				running = False
 				break
+		except KeyboardInterrupt:
+			setAll(False)
+			print "\nGoodbye"
